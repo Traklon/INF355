@@ -40,6 +40,11 @@ mDC :: Double -> Complex -> Complex
 mDC d (Comp a b) = Comp (a*d) (b*d)
 
 
+-- expC theta = exp(i*theta) (rad).
+expC :: Double -> Complex
+expC theta = Comp (cos theta) (sin theta)
+
+
 -- Introduction of Qubits.
 --
 -- In quantum computing, Bits are replaced with Qubits.
@@ -75,7 +80,7 @@ instance Num Qubit where
   (*) (State a b) (State c d) = State (a*c) (b*d)   -- Maybe useful for matrix calculations.
                                                     -- Wait and see.
 
-  abs (State a b) = State (Comp (sqrt r) 0) 0 where Comp r _ = abs(a)*abs(a)+abs(b)*abs(b)
+  abs (State a b) = State 1 0 
                                                     -- Totally useless.
 
   signum (State a b) = mDQ (1/(sqrt d)) (State a b) where Comp d _ = abs(a)*abs(a)+abs(b)*abs(b)
@@ -93,6 +98,34 @@ mDQ d (State a b) = State (mDC d a) (mDC d b)
 mCQ :: Complex -> Qubit -> Qubit
 mCQ c (State a b) = State (a*c) (b*c)
 
+-- A Qubit Register is a list of Qubits.
+data Register a = R [(a, Complex)]
 
--- TODO : Ecrire des registres ([Qubit]) et des portes (Hadamard, Shift).
---        Séparer le code en plusieurs fichiers.
+-- Bind will come later.
+instance Monad Register where
+  return a = R [(a, Comp 1 0)]
+
+-- A Register is an obvious functor.
+instance Functor Register where
+--fmap f (R l) = R (zip (map f (map fst l)) (map snd l))
+  fmap f (R l) = R [(f(x),p) | (x,p) <- l]
+
+-- A Gate is a function applied to a Register or a Qubit.
+-- A Gate is homeomorphic to a (Qubit Qubit) since it is fundamentally
+-- a 2x2 matrix in the {|0>, |1>} basis.
+data Gate = G Qubit Qubit
+
+-- hadamard is a gate that transforms |0> into (|0> + |1>) / (sqrt 2)
+--                                and |1> into (|0> - |1>) / (sqrt 2)
+hadamard :: Gate
+hadamard = G (signum (State 1 1)) (signum (State 1 (-1)))
+
+-- shift theta transforms |1> into exp(i*theta)|1>.
+shift :: Double -> Gate
+shift theta = G (State 1 0) (State 0 (expC theta)) 
+
+
+
+-- TODO : Séparer le code en plusieurs fichiers.
+--        Autres portes.
+--        Bind.
