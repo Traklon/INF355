@@ -1,6 +1,5 @@
 module Qubit where
 
--- Ket notation. Probably not useful, and will be deleted quickly.
 data Ket = Zero | One deriving (Eq, Ord, Enum, Read)
 
 instance Show Ket where
@@ -39,7 +38,6 @@ instance Fractional Complex where
 mDC :: Double -> Complex -> Complex
 mDC d (Comp a b) = Comp (a*d) (b*d)
 
-
 -- expC theta = exp(i*theta) (rad).
 expC :: Double -> Complex
 expC theta = Comp (cos theta) (sin theta)
@@ -60,72 +58,77 @@ expC theta = Comp (cos theta) (sin theta)
 -- I still don't know whether or not I should state if a value is
 -- fixed in the Qubit definition. I will see later.
 
-data Qubit = State Complex Complex  deriving (Eq, Read)
+data Kets = Q [Ket] deriving Eq
+
+instance Show Kets where
+  show (Q l) = "|" ++ show2 l ++ ">" where
+    show2 [] = ""
+    show2 (x:s) = tmp ++ (show2 s) where
+      tmp = if (x == Zero) then "0" else "1"
+
+data Qubits = State [(Kets, Complex)]
+
+qZero :: Qubits
+qZero = State([(Q [Zero], 1), (Q [One], 0)])
+
+qOne :: Qubits
+qOne = State([(Q[Zero], 0), (Q [One], 1)])
+
+qMoy :: Qubits
+qMoy = signum $ State([(Q[Zero], 1), (Q [One], 1)])
+
+qInv :: Qubits
+qInv = signum $ State([(Q[Zero], 1), (Q [One], -1)])
 
 -- Pretty printing.
-instance Show Qubit  where
-  show (State x y) =
-    if (y == 0)
-      then ("|0>")                                              -- We get rid of useless scalars.
-      else if (x == 0)
-        then ("|1>")                                            -- Same here.
-        else ("("++(show x)++") |0> + ("++(show y)++") |1>")        -- Here we don't do it, because
-                                                                    -- it doesn't help clarity.
+instance Show Qubits where
+  show (State []) = ""
+  show (State [(k,c)]) = "(" ++ show c ++ ")" ++ (show k)
+  show (State ((k,c):s)) = "(" ++ show c ++ ")" ++ (show k) ++ " + " ++ show (State s)
+
+op :: (Complex -> Complex -> Complex) -> Qubits -> Qubits -> Qubits
+op f (State l) (State m) = State (zip (map fst l) (zipWith f (map snd l) (map snd m)))
+
+opU :: (Complex -> Complex) -> Qubits -> Qubits
+opU f (State l) = State [(q,f p) | (q,p) <- l]
 
 -- Some useful calculations, some are useless, and are just here for
--- the sake of completeness though.
-instance Num Qubit where
-  (+) (State a b) (State c d) = State (a+c) (b+d)
-  (-) (State a b) (State c d) = State (a-c) (b-d)
-  (*) (State a b) (State c d) = State (a*c) (b*d)   -- Maybe useful for matrix calculations.
-                                                    -- Wait and see.
+-- the sake of completeness.
 
-  abs (State a b) = State 1 0 
-                                                    -- Totally useless.
+instance Num Qubits where
+  (+) q1 q2 = op (+) q1 q2
+  (-) q1 q2 = op (-) q1 q2
+  (*) q1 q2 = op (*) q1 q2
 
-  signum (State a b) = mDQ (1/(sqrt d)) (State a b) where Comp d _ = abs(a)*abs(a)+abs(b)*abs(b)
-                                                    -- Awesomely useful, since the "direction" of
-                                                    -- Qubits is all that matters.
-                                                    -- It's like a "normalize" function.
+  abs q = State [(Q [Zero], 1)]                     -- Totally useless.
 
-  fromInteger i = State (fromIntegral i) 0          -- Useless.
+  signum q = opU (mDC (1/(sqrt d))) q               -- Awesomely useful, since the "direction" of
+    where State l = opU abs $ op (*) q q            -- Qubits is all that matters.
+          Comp d _ = sum $ map snd l                -- It's like a "normalize" function.
+                                                    
+  fromInteger i = State [(Q [Zero], 1)]             -- Useless.
 
--- Multiplication by a scalar.
-mDQ :: Double -> Qubit -> Qubit
-mDQ d (State a b) = State (mDC d a) (mDC d b)
 
--- Multiplication by a Complex.
-mCQ :: Complex -> Qubit -> Qubit
-mCQ c (State a b) = State (a*c) (b*c)
-
--- A Qubit Register is a list of Qubits.
-data Register a = R [(a, Complex)]
-
--- Bind will come later.
-instance Monad Register where
-  return a = R [(a, Comp 1 0)]
-
--- A Register is an obvious functor.
-instance Functor Register where
---fmap f (R l) = R (zip (map f (map fst l)) (map snd l))
-  fmap f (R l) = R [(f(x),p) | (x,p) <- l]
-
--- A Gate is a function applied to a Register or a Qubit.
+-- A Gate is a function applied to a Register or a Qubit, or several Qubits.
 -- A Gate is homeomorphic to a (Qubit Qubit) since it is fundamentally
 -- a 2x2 matrix in the {|0>, |1>} basis.
-data Gate = G Qubit Qubit
+
+data Gate = G Qubits Qubits
 
 -- hadamard is a gate that transforms |0> into (|0> + |1>) / (sqrt 2)
 --                                and |1> into (|0> - |1>) / (sqrt 2)
 hadamard :: Gate
-hadamard = G (signum (State 1 1)) (signum (State 1 (-1)))
+hadamard = G qMoy qInv
 
 -- shift theta transforms |1> into exp(i*theta)|1>.
 shift :: Double -> Gate
-shift theta = G (State 1 0) (State 0 (expC theta)) 
+shift theta = G qZero $ opU (*(expC theta)) qOne  
 
 
 
 -- TODO : Séparer le code en plusieurs fichiers.
 --        Autres portes.
 --        Bind.
+--        Réécrire Register, Qubits, Gate...
+--        Peut-être remplacer Qubit par Register prenant des Kets en entrée
+--        (un Qubit est un Register de taille 2).
