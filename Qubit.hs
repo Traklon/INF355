@@ -1,11 +1,10 @@
 module Qubit where
 
-data Ket = Zero | One deriving (Eq, Ord, Enum, Read)
-
-instance Show Ket where
-  show s = case s of
-    Zero -> "|0>"
-    One -> "|1>"
+-- Some imports are done to ensure efficient matrix calculations.
+import qualified Data.Vector as V
+import qualified Data.Matrix as M
+import Numeric (showIntAtBase)
+import Data.Char (intToDigit)
 
 -- Introduction of Complex numbers, taking 2 Doubles as parameters.
 data Complex = Comp Double Double deriving (Eq,  Read)
@@ -39,8 +38,17 @@ mDC :: Double -> Complex -> Complex
 mDC d (Comp a b) = Comp (a*d) (b*d)
 
 -- expC theta = exp(i*theta) (rad).
+-- Fonction classique de l'exponentielle complexe.
 expC :: Double -> Complex
 expC theta = Comp (cos theta) (sin theta)
+
+-- Fonction qui génère des registres dans l'ordre.
+-- Utile pour la fonction "show" d'un registre.
+genKets :: Int -> [String]
+genKets i = reverse (gK i) where
+  gK 0 = ["|0>"]
+  gK i = ("|" ++ (showIntAtBase 2 intToDigit i "") ++ ">"):(gK (i-1))
+
 
 
 -- Introduction of Qubits.
@@ -57,78 +65,92 @@ expC theta = Comp (cos theta) (sin theta)
 -- the module of the coefficients. Then, the value is fixed.
 -- I still don't know whether or not I should state if a value is
 -- fixed in the Qubit definition. I will see later.
+--
+-- Registers are concatenated Qubits. They can be seen as binary numbers.
+--
+-- Now, all the functions are directly done on Registers, called "Qubits".
+-- In fact, a single Qubit is a register too.
+-- This makes calculations easier and cleaner.
+--
+-- Qubits are represented by a Vector. The value in the index i represent
+-- the possible value of the register i-1.
+-- This is much quicker than with lists, and much more logical.
+-- Furthermore, it interacts well with matrices.
 
-data Kets = Q [Ket] deriving Eq
+data Qubits = State (V.Vector Complex)
 
-instance Show Kets where
-  show (Q l) = "|" ++ show2 l ++ ">" where
-    show2 [] = ""
-    show2 (x:s) = tmp ++ (show2 s) where
-      tmp = if (x == Zero) then "0" else "1"
-
-data Qubits = State [(Kets, Complex)]
-
+-- Some useful Qubits
 qZero :: Qubits
-qZero = State([(Q [Zero], 1), (Q [One], 0)])
+qZero = State $ V.fromList [1, 0]
 
 qOne :: Qubits
-qOne = State([(Q[Zero], 0), (Q [One], 1)])
+qOne = State $ V.fromList [0, 1]
 
 qMoy :: Qubits
-qMoy = signum $ State([(Q[Zero], 1), (Q [One], 1)])
+qMoy = signum $ State $ V.fromList [1,1]
 
 qInv :: Qubits
-qInv = signum $ State([(Q[Zero], 1), (Q [One], -1)])
+qInv = signum $ State $ V.fromList [1,-1]
 
 -- Pretty printing.
 instance Show Qubits where
-  show (State []) = ""
-  show (State [(k,c)]) = "(" ++ show c ++ ")" ++ (show k)
-  show (State ((k,c):s)) = "(" ++ show c ++ ")" ++ (show k) ++ " + " ++ show (State s)
+  show (State t) = show' t' where
+    t' = zip (genKets (V.length t)) (V.toList t)
+    show' [] = ""
+    show' [(k,c)] = "(" ++ show c ++ ")" ++ (show k)
+    show' ((k,c):s) = "(" ++ show c ++ ")" ++ (show k) ++ " + " ++ show' s
 
+-- Allows operations between 2 Qubits, useful for the instanciation of Num.
 op :: (Complex -> Complex -> Complex) -> Qubits -> Qubits -> Qubits
-op f (State l) (State m) = State (zip (map fst l) (zipWith f (map snd l) (map snd m)))
+op f (State t) (State u) = State $ V.zipWith f t u
 
+-- Same with unary operations.
 opU :: (Complex -> Complex) -> Qubits -> Qubits
-opU f (State l) = State [(q,f p) | (q,p) <- l]
+opU f (State l) = State $ V.map f l
 
 -- Some useful calculations, some are useless, and are just here for
 -- the sake of completeness.
-
 instance Num Qubits where
   (+) q1 q2 = op (+) q1 q2
   (-) q1 q2 = op (-) q1 q2
   (*) q1 q2 = op (*) q1 q2
 
-  abs q = State [(Q [Zero], 1)]                     -- Totally useless.
+  abs q = qZero                                     -- Totally useless.
 
   signum q = opU (mDC (1/(sqrt d))) q               -- Awesomely useful, since the "direction" of
     where State l = opU abs $ op (*) q q            -- Qubits is all that matters.
-          Comp d _ = sum $ map snd l                -- It's like a "normalize" function.
+          Comp d _ = V.sum l                        -- It's like a "normalize" function.
                                                     
-  fromInteger i = State [(Q [Zero], 1)]             -- Useless.
+  fromInteger i = qZero                             -- Useless.
 
 
--- A Gate is a function applied to a Register or a Qubit, or several Qubits.
--- A Gate is homeomorphic to a (Qubit Qubit) since it is fundamentally
--- a 2x2 matrix in the {|0>, |1>} basis.
+-- A Gate is a function applied to a Register (Qubits).
+-- A Gate is homeomorphic to a matrix of complex numbers,
+-- in the {|0>, |1>...} basis.
+data Gate = G (Qubits -> Qubits)
 
-data Gate = G Qubits Qubits
+-- Allows a Register to be an argument of a matrix, seen as a function (like Gates).
+mQM :: (M.Matrix Complex) -> Qubits -> Qubits
+mQM m q = State $ V.fromList [V.sum (V.zipWith (*) (M.getRow i m) v) | i <- [1.. (V.length v)]]
+  where State v = q
+
+-- Transforms a list of Qubits into a matrix, in ordre to construct Gates.
+qToM :: [Qubits] -> (M.Matrix Complex)
+qToM l = foldr (M.<->) (M.matrix 0 (length l) (\_ -> 0)) [M.rowVector x | (State x) <- l]
 
 -- hadamard is a gate that transforms |0> into (|0> + |1>) / (sqrt 2)
 --                                and |1> into (|0> - |1>) / (sqrt 2)
 hadamard :: Gate
-hadamard = G qMoy qInv
+hadamard = G (mQM m) where
+  m = qToM [qMoy, qInv] 
 
 -- shift theta transforms |1> into exp(i*theta)|1>.
 shift :: Double -> Gate
-shift theta = G qZero $ opU (*(expC theta)) qOne  
+shift theta = G (mQM m) where
+  m = qToM [qZero, opU (*(expC theta)) qOne]  
 
 
 
 -- TODO : Séparer le code en plusieurs fichiers.
 --        Autres portes.
---        Bind.
---        Réécrire Register, Qubits, Gate...
---        Peut-être remplacer Qubit par Register prenant des Kets en entrée
---        (un Qubit est un Register de taille 2).
+--        Ecrire fonctions pour créer des registres de base (0 partout, 1 quelque part ; équilibré...)
