@@ -56,12 +56,6 @@ genKets i = reverse (gK i) where
 data Register = Qubits (V.Vector (Complex Double))
 
 -- Some useful Registers.
-qZero :: Register
-qZero = Qubits $ V.fromList [1, 0]
-
-qOne :: Register
-qOne = Qubits $ V.fromList [0, 1]
-
 qMoy :: Register
 qMoy = signum $ Qubits $ V.fromList [1,1]
 
@@ -76,7 +70,7 @@ instance Show Register where
     show' [(k,c)] = "(" ++ show c ++ ")" ++ (show k)
     show' ((k,c):s) = "(" ++ show c ++ ")" ++ (show k) ++ " + " ++ show' s
 
--- Allows operations between 2 Register, useful for the instanciation of Num.
+-- Allows operations between two Qubits, useful for the instanciation of Num.
 op :: (Complex Double -> Complex Double -> Complex Double) -> Register -> Register -> Register
 op f (Qubits t) (Qubits u) = Qubits $ V.zipVectorWith f t u
 
@@ -91,26 +85,24 @@ instance Num Register where
   (-) q1 q2 = op (-) q1 q2
   (*) q1 q2 = op (*) q1 q2
 
-  abs q = qZero                                     -- Totally useless.
+  abs q = qOne 2 0                                 -- Totally useless.
 
   signum q = opU (mDC (1/(sqrt d))) q               -- Awesomely useful, since the "direction" of
     where Qubits l = opU abs $ op (*) q q           -- Register is all that matters.
           d :+ _ = V.foldVector (+) 0 l             -- It's like a "normalize" function.
                                                     
-  fromInteger i = qZero                             -- Useless.
+  fromInteger i = qOne 2 0                         -- Useless.
 
--- Generates a Register with 0 everywhere except in i.
--- The register has size the smallest power of 2 higher (or equal) than i.
-qOneI :: Double -> Register 
-qOneI i = Qubits $ V.fromList [if (x == i) then 1 else 0 | x <- [0..(c-1)]] 
-  where c = max 2 $ 2^(ceiling ((log (i+1))/(log 2)))
+-- Generates a Register of size i with 0 everywhere except in j.
+qOne :: Int -> Int -> Register 
+qOne i j = Qubits $ V.fromList [if (x == j) then 1 else 0 | x <- [0..(i-1)]] 
 
 -- Generates a Register of size n, with every probability being the same,
 -- the sum of their squares being 1.
 qEq :: Int -> Register
 qEq n = signum $ Qubits $ V.fromList $ replicate n 1
 
--- A Gate is a function applied to a Register (Register).
+-- A Gate is a function applied to a Register.
 -- A Gate is homeomorphic to a matrix of complex numbers,
 -- in the {|0>, |1>...} basis.
 data Gate = G (Register -> Register)
@@ -119,30 +111,33 @@ data Gate = G (Register -> Register)
 mQM :: (M.Matrix (Complex Double)) -> Register -> Register
 mQM m q = Qubits (m <> v) where Qubits v = q
 
--- Transforms a list of Register into a matrix, in ordre to construct Gates.
+-- Transforms a list of Register into a matrix, in order to construct Gates.
 qToM :: [Register] -> (M.Matrix (Complex Double))
 qToM l = M.fromColumns [v | (Qubits v) <- l]
 
--- hadamard is a gate that transforms |0> into (|0> + |1>) / (sqrt 2)
---                                and |1> into (|0> - |1>) / (sqrt 2)
-hadamard :: Gate
-hadamard = G (mQM m) where
-  m = qToM [qMoy, qInv] 
-
-hadamardMat :: M.Matrix (Complex Double) 
-hadamardMat = qToM [qMoy, qInv]
-
--- shift theta transforms |1> into exp(i*theta)|1>.
-shiftMat :: Double -> M.Matrix (Complex Double)
-shiftMat theta = qToM [qZero, opU (*(expC theta)) qOne]
-
+-- Allows calculations done on single Qubits to be done globally on Registers
+-- without having to split the Registers.
 expandMat :: Int -> (M.Matrix (Complex Double)) -> (M.Matrix (Complex Double))
 expandMat 1 m = m
 expandMat i m = M.fromBlocks [[mapMatrix (* (m @@> (j,k))) n | k <- [0..l]] | j <- [0..l]]
   where n = expandMat (i-1) m
         l = (M.rows m) - 1
 
+-- hadamard is a gate that transforms |0> into (|0> + |1>) / (sqrt 2)
+--                                and |1> into (|0> - |1>) / (sqrt 2)
+hadamard :: Int -> Gate
+hadamard i = G $ mQM $ expandMat i $ qToM [qMoy, qInv]
+
+-- shift theta transforms |1*> into exp(i*theta)|1*>, id being performed on the other Qubits.
+shift :: Double -> Int -> Int -> Gate
+shift theta j i = G $ mQM $ expandMat i $ qToM $ [qOne k x | x <- [0.. k-2]]++[opU (*(expC theta)) (qOne k (k-1))]
+  where k = 2^j
+
+-- cNOT inverts 2 and 3.
+cNOT :: Int -> Gate
+cNOT i = G $ mQM $ expandMat i $ qToM [qOne 4 0, qOne 4 1, qOne 4 3, qOne 4 2]
 
 
--- TODO : Séparer le code en plusieurs fichiers.
---        Autres portes.
+
+-- TODO : Séparer le code en plusieurs fichiers (?).
+--        Circuits.
