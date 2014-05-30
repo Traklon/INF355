@@ -1,46 +1,22 @@
 module Qubit where
 
 -- Some imports are done to ensure efficient matrix calculations.
-import qualified Data.Vector as V
-import qualified Data.Matrix as M
+import qualified Data.Packed.Vector as V
+import qualified Data.Packed.Matrix as M
 import Numeric (showIntAtBase)
 import Data.Char (intToDigit)
+import Data.Complex 
+import Numeric.Container
 
--- Introduction of Complex numbers, taking 2 Doubles as parameters.
-data Complex = Comp Double Double deriving (Eq,  Read)
-
--- Pretty printing.
-instance Show Complex where
-  show (Comp r i) =
-    if (i == 0)
-      then show r
-      else if (r == 0)
-        then ((show i)++"i")
-        else if (i < 0)
-          then ((show r)++(show i)++"i")
-          else ((show r)++"+"++(show i)++"i")
-
--- Useful and classical calculations between Complex numbers.
-instance Num Complex where
-  (+) (Comp a b) (Comp c d) = Comp (a+c) (b+d)
-  (-) (Comp a b) (Comp c d) = Comp (a-c) (b-d)
-  (*) (Comp a b) (Comp c d) = Comp (a*c-b*d) (a*d+b*c)
-  abs (Comp a b) = Comp (sqrt(a*a+b*b)) 0
-  signum (Comp a b) = mDC (1/d) (Comp a b) where d = sqrt (a*a+b*b)
-  fromInteger i = Comp (fromIntegral i) 0
-
-instance Fractional Complex where
-  (/) (Comp a b) (Comp c d) = Comp ((a*c+b*d)/(c*c+d*d)) ((b*c-d*a)/(c*c+d*d))
-  fromRational r = Comp (fromRational r) 0
 
 -- Multiplication by a scalar.
-mDC :: Double -> Complex -> Complex
-mDC d (Comp a b) = Comp (a*d) (b*d)
+mDC :: Double -> Complex Double -> Complex Double
+mDC d (a :+ b) = (a*d) :+ (b*d)
 
 -- expC theta = exp(i*theta) (rad).
 -- Fonction classique de l'exponentielle complexe.
-expC :: Double -> Complex
-expC theta = Comp (cos theta) (sin theta)
+expC :: Double -> Complex Double
+expC theta = (cos theta) :+ (sin theta)
 
 -- Fonction qui génère des registres dans l'ordre.
 -- Utile pour la fonction "show" d'un registre.
@@ -77,9 +53,9 @@ genKets i = reverse (gK i) where
 -- This is much quicker than with lists, and much more logical.
 -- Furthermore, it interacts well with matrices.
 
-data Register = Qubits (V.Vector Complex)
+data Register = Qubits (V.Vector (Complex Double))
 
--- Some useful Register.
+-- Some useful Registers.
 qZero :: Register
 qZero = Qubits $ V.fromList [1, 0]
 
@@ -95,18 +71,18 @@ qInv = signum $ Qubits $ V.fromList [1,-1]
 -- Pretty printing.
 instance Show Register where
   show (Qubits t) = show' t' where
-    t' = zip (genKets (V.length t)) (V.toList t)
+    t' = zip (genKets (V.dim t)) (V.toList t)
     show' [] = ""
     show' [(k,c)] = "(" ++ show c ++ ")" ++ (show k)
     show' ((k,c):s) = "(" ++ show c ++ ")" ++ (show k) ++ " + " ++ show' s
 
 -- Allows operations between 2 Register, useful for the instanciation of Num.
-op :: (Complex -> Complex -> Complex) -> Register -> Register -> Register
-op f (Qubits t) (Qubits u) = Qubits $ V.zipWith f t u
+op :: (Complex Double -> Complex Double -> Complex Double) -> Register -> Register -> Register
+op f (Qubits t) (Qubits u) = Qubits $ V.zipVectorWith f t u
 
 -- Same with unary operations.
-opU :: (Complex -> Complex) -> Register -> Register
-opU f (Qubits l) = Qubits $ V.map f l
+opU :: (Complex Double -> Complex Double) -> Register -> Register
+opU f (Qubits l) = Qubits $ V.mapVector f l
 
 -- Some useful calculations, some are useless, and are just here for
 -- the sake of completeness.
@@ -119,7 +95,7 @@ instance Num Register where
 
   signum q = opU (mDC (1/(sqrt d))) q               -- Awesomely useful, since the "direction" of
     where Qubits l = opU abs $ op (*) q q           -- Register is all that matters.
-          Comp d _ = V.sum l                        -- It's like a "normalize" function.
+          d :+ _ = V.foldVector (+) 0 l             -- It's like a "normalize" function.
                                                     
   fromInteger i = qZero                             -- Useless.
 
@@ -140,13 +116,12 @@ qEq n = signum $ Qubits $ V.fromList $ replicate n 1
 data Gate = G (Register -> Register)
 
 -- Allows a Register to be an argument of a matrix, seen as a function (like Gates).
-mQM :: (M.Matrix Complex) -> Register -> Register
-mQM m q = Qubits $ V.fromList [V.sum (V.zipWith (*) (M.getRow i m) v) | i <- [1.. (V.length v)]]
-  where Qubits v = q
+mQM :: (M.Matrix (Complex Double)) -> Register -> Register
+mQM m q = Qubits (m <> v) where Qubits v = q
 
 -- Transforms a list of Register into a matrix, in ordre to construct Gates.
-qToM :: [Register] -> (M.Matrix Complex)
-qToM l = foldr (M.<->) (M.matrix 0 (length l) (\_ -> 0)) [M.rowVector x | (Qubits x) <- l]
+qToM :: [Register] -> (M.Matrix (Complex Double))
+qToM l = M.fromColumns [v | (Qubits v) <- l]
 
 -- hadamard is a gate that transforms |0> into (|0> + |1>) / (sqrt 2)
 --                                and |1> into (|0> - |1>) / (sqrt 2)
@@ -154,10 +129,18 @@ hadamard :: Gate
 hadamard = G (mQM m) where
   m = qToM [qMoy, qInv] 
 
+hadamardMat :: M.Matrix (Complex Double) 
+hadamardMat = qToM [qMoy, qInv]
+
 -- shift theta transforms |1> into exp(i*theta)|1>.
-shift :: Double -> Gate
-shift theta = G (mQM m) where
-  m = qToM [qZero, opU (*(expC theta)) qOne]  
+shiftMat :: Double -> M.Matrix (Complex Double)
+shiftMat theta = qToM [qZero, opU (*(expC theta)) qOne]
+
+expandMat :: Int -> (M.Matrix (Complex Double)) -> (M.Matrix (Complex Double))
+expandMat 1 m = m
+expandMat i m = M.fromBlocks [[mapMatrix (* (m @@> (j,k))) n | k <- [0..l]] | j <- [0..l]]
+  where n = expandMat (i-1) m
+        l = (M.rows m) - 1
 
 
 
