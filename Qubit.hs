@@ -2,11 +2,15 @@ module Qubit where
 
 -- Some imports are done to ensure efficient matrix calculations.
 import qualified Data.Packed.Vector as V
+import qualified Data.Vector as VV
 import qualified Data.Packed.Matrix as M
 import Numeric (showIntAtBase)
 import Data.Char (intToDigit)
 import Data.Complex 
 import Numeric.Container
+import Data.Function (on)
+import Data.Ord (comparing)
+import Data.List (sortBy, groupBy)
 
 
 -- Multiplication by a scalar.
@@ -14,12 +18,11 @@ mDC :: Double -> Complex Double -> Complex Double
 mDC d (a :+ b) = (a*d) :+ (b*d)
 
 -- expC theta = exp(i*theta) (rad).
--- Fonction classique de l'exponentielle complexe.
+-- Classical function for complex exponentiation.
 expC :: Double -> Complex Double
 expC theta = (cos theta) :+ (sin theta)
 
--- Fonction qui génère des registres dans l'ordre.
--- Utile pour la fonction "show" d'un registre.
+-- Fonction that generates registers in the right order.
 genKets :: Int -> [String]
 genKets i = reverse (gK i) where
   gK 0 = ["|0>"]
@@ -55,6 +58,30 @@ genKets i = reverse (gK i) where
 
 data Register = Qubits (V.Vector (Complex Double))
 
+data Qubit = Q (Complex Double) (Complex Double) deriving (Show)
+
+data QubitList = QL (VV.Vector (Qubit)) deriving (Show)
+
+qlToReg :: QubitList -> [Int] -> Register
+qlToReg (QL v) l = Qubits $ V.fromList $ qlToReg' [(VV.!) v i | i <- l]
+  where qlToReg' [(Q a b)] = [a,b]
+        qlToReg' ((Q a b):s) = let r = (qlToReg' s) in (map (*a) r) ++ (map (*b) r)
+
+mask :: Int -> Int -> [Bool]
+mask i n = map (\x -> ((x `div` 2^i) `mod` 2) == 1) [0..(n-1)]
+
+mask' :: Int -> Int -> [Bool]
+mask' i n = map (\x -> ((x `div` 2^i) `mod` 2) == 0) [0..(n-1)]
+
+
+regToQL :: Register -> QubitList -> [Int] -> QubitList
+regToQL (Qubits r) (QL v) l = QL $ (VV.//) v rtq 
+  where m = V.toList r
+        n = V.dim r
+        val i = sum $ map snd (filter fst (zip (mask i n) m))
+        val' i = sum $ map snd (filter fst (zip (mask' i n) m))
+        rtq = zip l [Q (val i) (val' i) | i <- [0..(length l)-1]]
+        
 -- Some useful Registers.
 qMoy :: Register
 qMoy = signum $ Qubits $ V.fromList [1,1]
@@ -85,13 +112,13 @@ instance Num Register where
   (-) q1 q2 = op (-) q1 q2
   (*) q1 q2 = op (*) q1 q2
 
-  abs q = qOne 2 0                                 -- Totally useless.
+  abs q = qOne 2 0                                  -- Totally useless.
 
   signum q = opU (mDC (1/(sqrt d))) q               -- Awesomely useful, since the "direction" of
     where Qubits l = opU abs $ op (*) q q           -- Register is all that matters.
           d :+ _ = V.foldVector (+) 0 l             -- It's like a "normalize" function.
                                                     
-  fromInteger i = qOne 2 0                         -- Useless.
+  fromInteger i = qOne 2 0                          -- Useless.
 
 -- Generates a Register of size i with 0 everywhere except in j.
 qOne :: Int -> Int -> Register 
@@ -128,7 +155,8 @@ expandMat i m = M.fromBlocks [[mapMatrix (* (m @@> (j,k))) n | k <- [0..l]] | j 
 hadamard :: Int -> Gate
 hadamard i = G $ mQM $ expandMat i $ qToM [qMoy, qInv]
 
--- shift theta transforms |1*> into exp(i*theta)|1*>, id being performed on the other Qubits.
+-- shift theta transforms |1*> into exp(i*theta)|1*>,
+-- id being performed on the other Qubits.
 shift :: Double -> Int -> Int -> Gate
 shift theta j i = G $ mQM $ expandMat i $ qToM $ [qOne k x | x <- [0.. k-2]]++[opU (*(expC theta)) (qOne k (k-1))]
   where k = 2^j
@@ -137,7 +165,26 @@ shift theta j i = G $ mQM $ expandMat i $ qToM $ [qOne k x | x <- [0.. k-2]]++[o
 cNOT :: Int -> Gate
 cNOT i = G $ mQM $ expandMat i $ qToM [qOne 4 0, qOne 4 1, qOne 4 3, qOne 4 2]
 
+intToBin :: Int -> [Bool]
+intToBin x = reverse $ intToBin' x
+  where intToBin' 0 = []
+        intToBin' y = let (a,b) = quotRem y 2 in (b == 1):intToBin' a
+
+select :: [Int] -> [a] -> [a]
+select [] _ = []
+select (x:s) l = (l!!x):(select s l)
+
+selBits :: [Int] -> Int -> [Bool] 
+selBits l a = select l $ intToBin a
+
+-- Creates a Register with only the selected Qubits.
+extract :: [Int] -> Register -> Register
+extract l (Qubits q) = signum $ Qubits q'
+  where tmp = zip [0..((dim q)-1)] (V.toList q)
+        fun = (selBits l) . fst
+        v = groupBy ((==) `on` fun) (sortBy (comparing fun) tmp)
+        q' = V.fromList $ map sum $ [map snd t | t <- v]
 
 
--- TODO : Séparer le code en plusieurs fichiers (?).
+-- TODO : QubitList instance de Num.       
 --        Circuits.
