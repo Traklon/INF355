@@ -73,15 +73,18 @@ mask i n = map (\x -> ((x `div` 2^i) `mod` 2) == 1) [0..(n-1)]
 mask' :: Int -> Int -> [Bool]
 mask' i n = map (\x -> ((x `div` 2^i) `mod` 2) == 0) [0..(n-1)]
 
-
 regToQL :: Register -> QubitList -> [Int] -> QubitList
 regToQL (Qubits r) (QL v) l = QL $ (VV.//) v rtq 
   where m = V.toList r
         n = V.dim r
-        val i = sum $ map snd (filter fst (zip (mask i n) m))
-        val' i = sum $ map snd (filter fst (zip (mask' i n) m))
-        rtq = zip l [Q (val i) (val' i) | i <- [0..(length l)-1]]
-        
+        val i = sqrt $ sum $ map ((^2) . snd) (filter fst (zip (mask i n) m))
+        val' i = sqrt $ sum $ map ((^2) . snd) (filter fst (zip (mask' i n) m))
+--      rtq = zip l [Q (val' i) (val i) | i <- (reverse [0..(length l)-1])]
+        rtq = zip l [Q (val' i) (val i) | i <- (reverse [0..(length l)-1])]
+
+-- Problème de module.
+
+
 -- Some useful Registers.
 qMoy :: Register
 qMoy = signum $ Qubits $ V.fromList [1,1]
@@ -184,6 +187,19 @@ extract l (Qubits q) = signum $ Qubits q'
         fun = (selBits l) . fst
         v = groupBy ((==) `on` fun) (sortBy (comparing fun) tmp)
         q' = V.fromList $ map sum $ [map snd t | t <- v]
+
+data Circuit = C [(Gate, [Int])]
+
+transfo :: Circuit -> QubitList -> QubitList
+transfo (C []) ql = ql
+transfo (C ((G f, l):s)) ql = transfo (C s) $ regToQL (f (qlToReg ql l)) ql l 
+
+toffoli :: Circuit
+toffoli = C [(h,[2]), (v, [1,2]), (c, [0,1]), (v', [1,2]), (c, [0,1]), (v, [0,2]), (h, [2])] 
+  where h = hadamard 1
+        v = shift (pi/2) 2 1
+        v' = shift  (-pi/2) 2 1
+        c = cNOT 1
 
 
 -- TODO : QubitList instance de Num.       
