@@ -1,6 +1,8 @@
 module Qubit where
 
--- Some imports are done to ensure efficient matrix calculations.
+
+-- Some imports are done to ensure efficient matrix calculations
+-- and general optimisation.
 import qualified Data.Packed.Vector as V
 import qualified Data.Vector as VV
 import qualified Data.Packed.Matrix as M
@@ -14,72 +16,32 @@ import Data.Ord (comparing)
 import Data.List (sortBy, groupBy)
 
 
--- Multiplication by a scalar.
-mDC :: Double -> Complex Double -> Complex Double
-mDC d (a :+ b) = (a*d) :+ (b*d)
 
--- expC theta = exp(i*theta) (rad).
--- Classical function for complex exponentiation.
-expC :: Double -> Complex Double
-expC theta = (cos theta) :+ (sin theta)
+
+-- Data structures.
+
+
+-- A Qubit is simply composed of 2 Complex numbers,
+-- representing the values on the basis {|0> ; |1>}.
+data Qubit = Q (Complex Double) (Complex Double) deriving (Show)
+
+
+-- Vector of Qubits. Used at the start, then transformed into a Register.
+data QubitList = QL (VV.Vector (Qubit)) deriving (Show)
+
+
+-- A register is a representation of one or several Qubits.
+-- QubitList [(a*|0> + b*|1>),(c*|0> + d*|1>)] becomes
+-- (ac*|00> + ad*|01> + bc*|10> + bd*|11>) as a Register.
+-- Always of size 2^n for some integer n > 0.
+-- Inplemented as a packed Vector because it isn't mutable.
+data Register = Qubits (V.Vector (Complex Double))
 
 -- Fonction that generates registers in the right order.
 genKets :: Int -> [String]
 genKets i = reverse (gK i) where
   gK 0 = ["|0>"]
   gK i = ("|" ++ (showIntAtBase 2 intToDigit i "") ++ ">"):(gK (i-1))
-
-
-
--- Introduction of Register.
---
--- In quantum computing, Bits are replaced with Register.
--- They can be in state |0> or |1> just like normal Bits, but also
--- in a linear combination of them, in regard with the complex field.
---
--- The two Complex fields represent the coordinates in regard with
--- the {|0>, |1>} basis.
---
--- However, when we mesure the value of a Qubit, we only see one
--- value, drawn at random with a probability being proportional with
--- the module of the coefficients. Then, the value is fixed.
--- I still don't know whether or not I should state if a value is
--- fixed in the Qubit definition. I will see later.
---
--- Registers are concatenated Register. They can be seen as binary numbers.
---
--- Now, all the functions are directly done on Registers.
--- In fact, a single Qubit is a register too.
--- This makes calculations easier and cleaner.
---
--- Registers are represented by a Vector. The value in the index i represent
--- the possible value of the register i-1.
--- This is much quicker than with lists, and much more logical.
--- Furthermore, it interacts well with matrices.
-
-data Register = Qubits (V.Vector (Complex Double))
-
-data Qubit = Q (Complex Double) (Complex Double) deriving (Show)
-
-data QubitList = QL (VV.Vector (Qubit)) deriving (Show)
-
-qlToReg :: QubitList -> [Int] -> Register
-qlToReg (QL v) l = Qubits $ V.fromList $ qlToReg' [(VV.!) v i | i <- l]
-  where qlToReg' [(Q a b)] = [a,b]
-        qlToReg' ((Q a b):s) = let r = (qlToReg' s) in (map (*a) r) ++ (map (*b) r)
-
-mask :: Int -> Int -> [Bool]
-mask i n = map (\x -> ((x `div` 2^i) `mod` 2) == 1) [0..(n-1)]
-
-mask' :: Int -> Int -> [Bool]
-mask' i n = map (\x -> ((x `div` 2^i) `mod` 2) == 0) [0..(n-1)]
-
--- Some useful Registers.
-qMoy :: Register
-qMoy = signum $ Qubits $ V.fromList [1,1]
-
-qInv :: Register
-qInv = signum $ Qubits $ V.fromList [1,-1]
 
 -- Pretty printing.
 instance Show Register where
@@ -88,14 +50,6 @@ instance Show Register where
     show' [] = ""
     show' [(k,c)] = "(" ++ show c ++ ")" ++ (show k)
     show' ((k,c):s) = "(" ++ show c ++ ")" ++ (show k) ++ " + " ++ show' s
-
--- Allows operations between two Qubits, useful for the instanciation of Num.
-op :: (Complex Double -> Complex Double -> Complex Double) -> Register -> Register -> Register
-op f (Qubits t) (Qubits u) = Qubits $ V.zipVectorWith f t u
-
--- Same with unary operations.
-opU :: (Complex Double -> Complex Double) -> Register -> Register
-opU f (Qubits l) = Qubits $ V.mapVector f l
 
 -- Some useful calculations, some are useless, and are just here for
 -- the sake of completeness.
@@ -112,33 +66,59 @@ instance Num Register where
                                                     
   fromInteger i = qOne 2 0                          -- Useless.
 
--- Generates a Register of size i with 0 everywhere except in j.
-qOne :: Int -> Int -> Register 
-qOne i j = Qubits $ V.fromList [if (x == j) then 1 else 0 | x <- [0..(i-1)]] 
 
--- Generates a Register of size n, with every probability being the same,
--- the sum of their squares being 1.
-qEq :: Int -> Register
-qEq n = signum $ Qubits $ V.fromList $ replicate n 1
+-- A Gate is a function that modifies Registers.
+-- It is naturally defined as a packed matrix since it
+-- is unmutable, allows fast Vector (Register) modification, and
+-- is easily homeomorphic to a boolean function.
+data Gate = G (M.Matrix (Complex Double)) deriving (Show) 
 
--- A Gate is a function applied to a Register.
--- A Gate is homeomorphic to a matrix of complex numbers,
--- in the {|0>, |1>...} basis.
+-- A Circuit is a list of Gates, with the Qubits they act on.
+data Circuit = C [(Gate, [Int])]
 
-data Gate = G (Register -> Register)
---data Gate = (Explicit Mat) | (Implicit Gate [Bool])
+
+
+
+-- Some useful conversions between data types/structures.
+
+
+-- Multiplication by a scalar.
+mDC :: Double -> Complex Double -> Complex Double
+mDC d (a :+ b) = (a*d) :+ (b*d)
+
+
+-- expC theta = exp(i*theta) (rad).
+-- Classical function for complex exponentiation.
+expC :: Double -> Complex Double
+expC theta = (cos theta) :+ (sin theta)
+
+
+-- Transforms a QubitList into a Register.
+-- Doing the opposite is difficult.
+qlToReg :: QubitList -> [Int] -> Register
+qlToReg (QL v) l = Qubits $ V.fromList $ qlToReg' [(VV.!) v i | i <- l]
+  where qlToReg' [(Q a b)] = [a,b]
+        qlToReg' ((Q a b):s) = let r = (qlToReg' s) in (map (*a) r) ++ (map (*b) r)
+
+
+-- Allows operations between two Qubits, useful for the instanciation of Num.
+op :: (Complex Double -> Complex Double -> Complex Double) -> Register -> Register -> Register
+op f (Qubits t) (Qubits u) = Qubits $ V.zipVectorWith f t u
+
+-- Same with unary operations.
+opU :: (Complex Double -> Complex Double) -> Register -> Register
+opU f (Qubits l) = Qubits $ V.mapVector f l
+
 
 -- Allows a Register to be an argument of a matrix, seen as a function (like Gates).
-mQM :: (M.Matrix (Complex Double)) -> Register -> Register
-mQM m q = Qubits (m <> v) where Qubits v = q
+mQM :: Gate -> Register -> Register
+mQM (G m) q = Qubits (m <> v) where Qubits v = q
 
 -- Transforms a list of Register into a matrix, in order to construct Gates.
 qToM :: [Register] -> (M.Matrix (Complex Double))
 qToM l = M.fromColumns [v | (Qubits v) <- l]
 
--- Allows calculations done on single Qubits to be done globally on Registers
--- without having to split the Registers.
-
+-- Conversions between binary (seen as a boolean list) and decimal.
 toBin :: Int -> [Bool]
 toBin 0 = [False]
 toBin i = reverse $ toBin' i
@@ -150,75 +130,163 @@ fromBin l = fromBin' 1 0 $ reverse l
   where fromBin' _ v [] = v
         fromBin' i v (x:s) = if x then (fromBin' (2*i) (v+i) s) else (fromBin' (2*i) v s)
 
-filter' :: [Bool] -> [a] -> [a]
-filter' f l = map snd $ filter fst $ zip (map ((!!) f) [0..]) l
 
-fonction :: [Bool] -> M.Matrix (Complex Double) -> (Int,Int) -> (Complex Double)
-fonction ind g (i,j) = 
-  if (val == 0) then g @@> (i', j') else 0
-    where val = xor i j .&. (fromBin (map not ind))
-          n = length ind
-          bi = toBin i
-          bj = toBin j
-          i' = fromBin $ filter' ind $ [False | _ <- [length bi .. n-1]] ++ bi
-          j' = fromBin $ filter' ind $ [False | _ <- [length bj .. n-1]] ++ bj
-             
+-- Converts [1,3] 6 in [True, False, True, False, False, False].
+intToBool :: [Int] -> Int -> [Bool]
+intToBool l i = reverse $ itb (reverse l) i
+  where itb [] n = [False | _ <- [1 .. n]]
+        itb (x:s) n = if (x == n) then True:(itb s (n-1)) else False:(itb (x:s) (n-1))
 
-expandMat' :: [Bool] -> M.Matrix (Complex Double) -> M.Matrix (Complex Double)
-expandMat' ind g = buildMatrix n n (fonction ind g)
+
+
+
+-- Generation of useful classical Registers.
+
+
+-- Same value for the 2 possibilities.
+qMoy :: Register
+qMoy = signum $ Qubits $ V.fromList [1,1]
+
+
+-- Opposite value for the 2 possibilities.
+-- Note that the module is the same.
+qInv :: Register
+qInv = signum $ Qubits $ V.fromList [1,-1]
+
+
+-- Generates a Register of size i with 0 everywhere except in j.
+qOne :: Int -> Int -> Register 
+qOne i j = Qubits $ V.fromList [if (x == j) then 1 else 0 | x <- [0..(i-1)]] 
+
+
+-- Generates a Register of size n, with every probability being the same,
+-- the sum of their squares being 1.
+qEq :: Int -> Register
+qEq n = signum $ Qubits $ V.fromList $ replicate n 1
+
+
+
+
+-- Operations on Gates.
+
+
+-- Allows a calculation being done on only a subset of the Qubits
+-- which belong to the Register to be done on the whole Register,
+-- without modifying the Qubits which are not selected.
+expandGate :: [Bool] -> Gate -> Gate
+expandGate ind (G g) = G (buildMatrix n n (f ind g))
   where n = (^(length ind)) 2
+        f ind g (i,j) = 
+          if (val == 0) then g @@> (i', j') else 0
+            where val = xor i j .&. (fromBin (map not ind))
+                  n = length ind
+                  bi = toBin i
+                  bj = toBin j
+                  filter' f l = map snd $ filter fst $ zip (map ((!!) f) [0..]) l
+                  i' = fromBin $ filter' ind $ [False | _ <- [length bi .. n-1]] ++ bi
+                  j' = fromBin $ filter' ind $ [False | _ <- [length bj .. n-1]] ++ bj
 
-expandMat :: Int -> (M.Matrix (Complex Double)) -> (M.Matrix (Complex Double))
-expandMat 1 m = m
-expandMat i m = M.fromBlocks [[mapMatrix (* (m @@> (j,k))) n | k <- [0..l]] | j <- [0..l]]
-  where n = expandMat (i-1) m
+
+-- Allows a calculation on some Qubits being done independantly
+-- on several blocks to be duplicated.
+parallelize :: Int -> Gate -> Gate
+parallelize 1 g = g
+parallelize i (G m) = G (M.fromBlocks [[mapMatrix (* (m @@> (j,k))) n | k <- [0..l]] | j <- [0..l]])
+  where (G n) = parallelize (i-1) (G m)
         l = (M.rows m) - 1
+
+
+
+-- Some useful gates, which exist practically.
+
+
+-- Identity function : similar to a wire.
+-- Useful as being the representative Gate of a circuit without Gates.
+iden :: Int -> Gate
+iden i = parallelize i $ G (qToM [qOne 2 0, qOne 2 1])
+
 
 -- hadamard is a gate that transforms |0> into (|0> + |1>) / (sqrt 2)
 --                                and |1> into (|0> - |1>) / (sqrt 2)
 hadamard :: Int -> Gate
-hadamard i = G $ mQM $ expandMat i $ qToM [qMoy, qInv]
+hadamard i = parallelize i $ G (qToM [qMoy, qInv])
+
+-- qNOT is the classical NOT function.
+qNOT :: Int -> Gate
+qNOT i = parallelize i $ G (qToM [qOne 2 1, qOne 2 0])
 
 -- shift theta transforms |1*> into exp(i*theta)|1*>,
 -- id being performed on the other Qubits.
 shift :: Double -> Int -> Int -> Gate
-shift theta j i = G $ mQM $ expandMat i $ qToM $ [qOne k x | x <- [0.. k-2]]++[opU (*(expC theta)) (qOne k (k-1))]
+shift theta j i = parallelize i $ G (qToM ([qOne k x | x <- [0.. k-2]]++[opU (*(expC theta)) (qOne k (k-1))]))
   where k = 2^j
 
--- cNOT inverts 2 and 3.
+
+-- cNOT inverts |10> and |11>.
+-- It can be seen as a NOT function, controlled by the first Qubit.
 cNOT :: Int -> Gate
-cNOT i = G $ mQM $ expandMat i $ qToM [qOne 4 0, qOne 4 1, qOne 4 3, qOne 4 2]
+cNOT i = parallelize i $ G (qToM [qOne 4 0, qOne 4 1, qOne 4 3, qOne 4 2])
 
-intToBin :: Int -> [Bool]
-intToBin x = reverse $ intToBin' x
-  where intToBin' 0 = []
-        intToBin' y = let (a,b) = quotRem y 2 in (b == 1):intToBin' a
 
-select :: [Int] -> [a] -> [a]
-select [] _ = []
-select (x:s) l = (l!!x):(select s l)
+-- swap simply swaps the Qubits.
+swap :: Int -> Gate
+swap i = parallelize i $ G (qToM [qOne 4 0, qOne 4 2, qOne 4 1, qOne 4 3])
 
-selBits :: [Int] -> Int -> [Bool] 
-selBits l a = select l $ intToBin a
 
--- Creates a Register with only the selected Qubits.
-extract :: [Int] -> Register -> Register
-extract l (Qubits q) = signum $ Qubits q'
-  where tmp = zip [0..((dim q)-1)] (V.toList q)
-        fun = (selBits l) . fst
-        v = groupBy ((==) `on` fun) (sortBy (comparing fun) tmp)
-        q' = V.fromList $ map sum $ [map snd t | t <- v]
 
-data Circuit = C [(Gate, [Int])]
 
---transfo :: Circuit -> QubitList -> QubitList
---transfo (C []) ql = ql
---transfo (C ((G f, l):s)) ql = transfo (C s) $ regToQL (f (qlToReg ql l)) ql l 
+-- Functions on Circuits.
 
+-- cTG stands for "Circuit to Gate".
+-- It allows the compression of a Circuit in a single Gate.
+cTG :: Circuit -> Int -> Int -> Gate
+cTG c n i = parallelize i $ tmp c $ iden n
+  where tmp (C []) g = g
+        tmp (C ((g, l):s)) (G m) = let (G m') = expandGate (intToBool l n) g in tmp (C s) (G (m' <> m))
+
+
+-- transfo applies a Circuit to a Register.
+transfo :: Circuit -> QubitList -> Register
+transfo c ql = transfo' c $ qlToReg ql [0.. (n-1)]
+  where QL l = ql
+        n = VV.length l
+        transfo' (C []) r = r
+        transfo' (C ((g, l):s)) r = transfo' (C s) $ mQM (expandGate (intToBool l n) g) r
+
+
+
+
+-- Some useful Circuits.
+
+
+-- The toffoli gate can be seen as a C²NOT gate.
+-- It acts like CNOT, the control Qubit being the AND of the first 2 Qubits.
+-- Useful because it is universal : any reversible circuit can be
+-- constructed only with toffoli gates. 
 toffoli :: Circuit
-toffoli = C [(h,[2]), (v, [1,2]), (c, [0,1]), (v', [1,2]), (c, [0,1]), (v, [0,2]), (h, [2])] 
+toffoli = C [(h,[3]), (v, [2,3]), (c, [1,2]), (v', [2,3]), (c, [1,2]), (v, [1,3]), (h, [3])] 
   where h = hadamard 1
         v = shift (pi/2) 2 1
-        v' = shift  (-pi/2) 2 1
+        v' = shift (-pi/2) 2 1
         c = cNOT 1
 
+-- adder acts like an... adder.
+-- The third Qubit should always be 0 at the beginning.
+-- The first Qubit stays the same.
+-- The second Qubit receives the XOR of the first 2 Qubits.
+-- The last Qubit receives the carry (the AND) of the first 2 Qubits.
+adder :: Circuit
+adder = C [(t,[1,2,3]),(c,[1,2])]
+  where t = cTG toffoli 3 1
+        c = cNOT 1
+
+
+-- The fredkin gate is a "controlled swap", the first Qubit
+-- being the control one.
+
+-- Incoming.
+
+
+-- The n-Qubit QFT performs a Fourier transform on n Qubits.
+
+-- Incoming.
