@@ -245,6 +245,11 @@ cTG c n i = parallelize i $ tmp c $ iden n
         tmp (C ((g, l):s)) (G m) = let (G m') = expandGate (intToBool l n) g in tmp (C s) (G (m' <> m))
 
 
+-- concat merges two citcuits.
+concat :: Circuit -> Circuit -> Circuit
+concat (C c) (C c') = C (c ++ c')
+
+
 -- transfo applies a Circuit to a Register.
 transfo :: Circuit -> QubitList -> Register
 transfo c ql = transfo' c $ qlToReg ql [0.. (n-1)]
@@ -288,5 +293,8 @@ adder = C [(t,[1,2,3]),(c,[1,2])]
 
 
 -- The n-Qubit QFT performs a Fourier transform on n Qubits.
-
--- Incoming.
+qft :: Int -> Circuit
+qft 1 = C [(hadamard 1, [1])]
+qft n = C ((cTG c 4 1, [1 .. (n-1)]):([(s i n,[i,n]) | i <- [1 .. (n-1)]]++[(hadamard 1, [n])]))
+  where c = qft (n-1)
+        s i n = shift (pi/(2^(n-i-1))) 2 1
