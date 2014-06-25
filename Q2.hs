@@ -1,4 +1,4 @@
-module Qubit where
+module Q2 where
 
 
 -- Some imports are done to ensure efficient matrix calculations
@@ -137,6 +137,15 @@ intToBool l i = reverse $ itb (reverse l) i
   where itb [] n = [False | _ <- [1 .. n]]
         itb (x:s) n = if (x == n) then True:(itb s (n-1)) else False:(itb (x:s) (n-1))
 
+-- Opposite function. 
+boolToInt :: [Bool] -> [Int]
+boolToInt l = map fst $ filter snd $ zip [1..(length l)] l
+
+
+-- Creates an helpful mask to know which registers contains a specific value for one Qubit.
+mask :: Int -> Int -> [Bool]
+mask i n = map (\x -> ((x `div` 2^(i-1)) `mod` 2) == 1) [0..(n-1)]
+
 
 
 
@@ -233,9 +242,18 @@ swap :: Int -> Gate
 swap i = parallelize i $ G (qToM [qOne 4 0, qOne 4 2, qOne 4 1, qOne 4 3])
 
 
+-- Creates the Gate associatied with the Quantum function in the some algorithms.
+oracle :: Int -> ([Bool] -> Int) -> Gate
+oracle n f = G (buildMatrix (2^n) (2^n) g)
+  where g (i,j) = if (j == 2*a+y) then 1 else 0
+          where (a,b) = quotRem i 2
+                tmp = toBin a
+                y = f ([False | _ <- [(length tmp) .. n-2]]++tmp) `xor` b
 
 
--- Functions on Circuits.
+
+
+-- Functions related to Circuits.
 
 -- cTG stands for "Circuit to Gate".
 -- It allows the compression of a Circuit in a single Gate.
@@ -257,6 +275,20 @@ transfo c ql = transfo' c $ qlToReg ql [0.. (n-1)]
         n = VV.length l
         transfo' (C []) r = r
         transfo' (C ((g, l):s)) r = transfo' (C s) $ mQM (expandGate (intToBool l n) g) r
+
+
+-- Allows the calculation of the probability of the value of specific Qubits.
+-- It usually terminates the calculations, at the end of circuits/algorithms.
+measure :: Register -> [Bool] -> [Bool] -> Double
+measure (Qubits r) qs v = realPart $ sum $ map (abs . (^2) . snd) (filter fst (zip select m))
+  where m = V.toList r
+        n = length qs
+        conc n 0 _ _ = replicate (2^n) [True]
+        conc n _ _ [] = replicate (2^n) [True]
+        conc n i (x:s) (x':s') = if x then if x' then zipWith (:) (mask i (2^n)) l else zipWith (:) (map not (mask i (2^n))) l else l'
+            where l = conc n (i-1) s s'
+                  l' = conc n (i-1) s (x':s')
+        select = map and $ conc n n qs v
 
 
 
@@ -286,15 +318,44 @@ adder = C [(t,[1,2,3]),(c,[1,2])]
         c = cNOT 1
 
 
--- The fredkin gate is a "controlled swap", the first Qubit
--- being the control one.
-
--- Incoming.
-
-
 -- The n-Qubit QFT performs a Fourier transform on n Qubits.
 qft :: Int -> Circuit
 qft 1 = C [(hadamard 1, [1])]
 qft n = C ((cTG c 4 1, [1 .. (n-1)]):([(s i n,[i,n]) | i <- [1 .. (n-1)]]++[(hadamard 1, [n])]))
   where c = qft (n-1)
         s i n = shift (pi/(2^(n-i-1))) 2 1
+          
+
+-- Creates the Deutsch-Josza circuit.
+circuitDJ :: Int -> ([Bool] -> Int) -> Circuit
+circuitDJ n f = C [(h, [1..n]),(oracle n f, [1..n]),(h', [1..(n-1)])]
+  where h = hadamard n
+        h' = hadamard $ n-1
+
+
+
+
+-- Some algorithms that use Quantum mechanics.
+
+
+-- Deutsch-Josza's algorithm examples.
+--
+-- Our implementation uses the most complete version of the problem, with
+-- a function f : {0;1}^n -> {0;1} that is either constant or equilibrated.
+-- The goal is to know with only 1 measurement if f is constant or equilibrated.
+-- A deterministic algorithm that uses classical bits would need 2^(n-1)+1 measurements.
+-- The value returned at the end is the probability that the first (n-1) Qubits are
+-- all in the state 0. f is constant if it equals 1 (can be physically interpreted as a 
+-- constructive interference), or equilibrated if it equals 0 (destructive interference).
+-- For more information : http://en.wikipedia.org/wiki/Deutsch%E2%80%93Jozsa_algorithm
+constantDJ :: Int -> Double
+constantDJ n = measure r ((replicate (n-1) True)++[False]) (replicate (n-1) False)
+  where tmp = QL (VV.fromList ((replicate (n-1) (Q 1 0))++[Q 0 1]))
+        cdj = circuitDJ n (\_ -> 1)
+        r = transfo cdj tmp
+
+equilibratedDJ :: Int -> Double
+equilibratedDJ n = measure r ((replicate (n-1) True)++[False]) (replicate (n-1) False)
+  where tmp = QL (VV.fromList ((replicate (n-1) (Q 1 0))++[Q 0 1]))
+        cdj = circuitDJ n (\l -> if (l!!0) then 1 else 0)
+        r = transfo cdj tmp
