@@ -370,14 +370,14 @@ circuitDJ n f = C [(h, [1..n]),(oracle n f, [1..n]),(h', [1..(n-1)])]
 -- f is constant if they are all in the state 0  (can be physically interpreted as a 
 -- constructive interference), and equilibrated if not (destructive interference).
 -- For more information : http://en.wikipedia.org/wiki/Deutsch%E2%80%93Jozsa_algorithm
-constantDJ :: Int -> Double
-constantDJ n = measureProba r ((replicate (n-1) True)++[False]) (replicate (n-1) False)
+constantDJ :: Int -> [Double]
+constantDJ n = estimate 42 1000 r ((replicate (n-1) True)++[False]) 
   where tmp = QL (VV.fromList ((replicate (n-1) (Q 1 0))++[Q 0 1]))
         cdj = circuitDJ n (\_ -> 1)
         r = transfo cdj tmp
 
-equilibratedDJ :: Int -> Double
-equilibratedDJ n = measureProba r ((replicate (n-1) True)++[False]) (replicate (n-1) False)
+equilibratedDJ :: Int -> [Double]
+equilibratedDJ n = estimate 42 1000 r ((replicate (n-1) True)++[False]) 
   where tmp = QL (VV.fromList ((replicate (n-1) (Q 1 0))++[Q 0 1]))
-        cdj = circuitDJ n (\l -> if (l!!0) then 1 else 0)
+        cdj = circuitDJ n (\l -> length (filter id l) `mod` 2) 
         r = transfo cdj tmp
