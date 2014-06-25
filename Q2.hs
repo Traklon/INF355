@@ -14,6 +14,7 @@ import Numeric.Container
 import Data.Function (on)
 import Data.Ord (comparing)
 import Data.List (sortBy, groupBy)
+import System.Random
 
 
 
@@ -147,8 +148,6 @@ mask :: Int -> Int -> [Bool]
 mask i n = map (\x -> ((x `div` 2^(i-1)) `mod` 2) == 1) [0..(n-1)]
 
 
-
-
 -- Generation of useful classical Registers.
 
 
@@ -278,17 +277,39 @@ transfo c ql = transfo' c $ qlToReg ql [0.. (n-1)]
 
 
 -- Allows the calculation of the probability of the value of specific Qubits.
--- It usually terminates the calculations, at the end of circuits/algorithms.
-measure :: Register -> [Bool] -> [Bool] -> Double
-measure (Qubits r) qs v = realPart $ sum $ map (abs . (^2) . snd) (filter fst (zip select m))
+-- It is used to understand the circuits/algorithms but it can't be used in
+-- reality : only measurements can be made, and probabilities inferred from them.
+measureProba :: Register -> [Bool] -> [Bool] -> Double
+measureProba (Qubits r) qs v = realPart $ sum $ map (abs . (^2) . snd) (filter fst (zip select m))
   where m = V.toList r
         n = length qs
         conc n 0 _ _ = replicate (2^n) [True]
         conc n _ _ [] = replicate (2^n) [True]
         conc n i (x:s) (x':s') = if x then if x' then zipWith (:) (mask i (2^n)) l else zipWith (:) (map not (mask i (2^n))) l else l'
-            where l = conc n (i-1) s s'
-                  l' = conc n (i-1) s (x':s')
+          where l = conc n (i-1) s s'
+                l' = conc n (i-1) s (x':s')
         select = map and $ conc n n qs v
+
+-- Performs a measurement on a register.
+-- It usually terminates the calculations, at the end of circuits/algorithms
+-- as it freezes the value of the register.
+measure :: Int -> [Double]-> Int
+measure g l = isAbove rand $ zip [-1 ..] $ partSum l
+  where (rand, _) = random (mkStdGen g)::(Double, StdGen)
+        partSum [] = [0]
+        partSum (x:s) = let l = (partSum s) in (x+(l!!0):l)
+        isAbove val [(a,b)] = a 
+        isAbove val ((a,b):s) = if (val < b) then isAbove val s else a
+
+
+estimate :: Int -> Int -> Register -> [Bool] -> [Double]
+estimate g n r qs = VV.toList $ est n rands (VV.fromList (replicate n' 0))
+  where liste = [measureProba r qs ([False | _ <- [length (toBin b) .. (length (filter id qs))-1]]++(toBin b)) | b <- [0..2^(length (filter id qs))-1]]
+        n' = length liste
+        rands = randoms (mkStdGen g)::[Int]
+        est 0 _ l = l
+        est i (x:s) l = est (i-1) s ((VV.//) l [(m, (((VV.!) l m)+1))])    
+          where m = measure x liste
 
 
 
@@ -306,6 +327,7 @@ toffoli = C [(h,[3]), (v, [2,3]), (c, [1,2]), (v', [2,3]), (c, [1,2]), (v, [1,3]
         v = shift (pi/2) 2 1
         v' = shift (-pi/2) 2 1
         c = cNOT 1
+
 
 -- adder acts like an... adder.
 -- The third Qubit should always be 0 at the beginning.
@@ -344,18 +366,18 @@ circuitDJ n f = C [(h, [1..n]),(oracle n f, [1..n]),(h', [1..(n-1)])]
 -- a function f : {0;1}^n -> {0;1} that is either constant or equilibrated.
 -- The goal is to know with only 1 measurement if f is constant or equilibrated.
 -- A deterministic algorithm that uses classical bits would need 2^(n-1)+1 measurements.
--- The value returned at the end is the probability that the first (n-1) Qubits are
--- all in the state 0. f is constant if it equals 1 (can be physically interpreted as a 
--- constructive interference), or equilibrated if it equals 0 (destructive interference).
+-- The value returned at the end is a measurement of the first (n-1) Qubits.
+-- f is constant if they are all in the state 0  (can be physically interpreted as a 
+-- constructive interference), and equilibrated if not (destructive interference).
 -- For more information : http://en.wikipedia.org/wiki/Deutsch%E2%80%93Jozsa_algorithm
 constantDJ :: Int -> Double
-constantDJ n = measure r ((replicate (n-1) True)++[False]) (replicate (n-1) False)
+constantDJ n = measureProba r ((replicate (n-1) True)++[False]) (replicate (n-1) False)
   where tmp = QL (VV.fromList ((replicate (n-1) (Q 1 0))++[Q 0 1]))
         cdj = circuitDJ n (\_ -> 1)
         r = transfo cdj tmp
 
 equilibratedDJ :: Int -> Double
-equilibratedDJ n = measure r ((replicate (n-1) True)++[False]) (replicate (n-1) False)
+equilibratedDJ n = measureProba r ((replicate (n-1) True)++[False]) (replicate (n-1) False)
   where tmp = QL (VV.fromList ((replicate (n-1) (Q 1 0))++[Q 0 1]))
         cdj = circuitDJ n (\l -> if (l!!0) then 1 else 0)
         r = transfo cdj tmp
