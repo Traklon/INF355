@@ -17,6 +17,8 @@ import System.Random
 import Diag
 import Diagrams.Prelude hiding (shift, (<>))
 import Diagrams.Backend.SVG.CmdLine
+import Graphics.Gnuplot.Simple
+
 
 
 
@@ -306,7 +308,7 @@ estimate g n r qs = VV.toList $ est n rands (VV.fromList (replicate n' 0))
         n' = length liste
         rands = randoms (mkStdGen g)::[Int]
         est 0 _ l = l
-        est i (x:s) l = est (i-1) s ((VV.//) l [(m, (((VV.!) l m)+1))])    
+        est i (x:s) l = est (i-1) s ((VV.//) l [(m, (((VV.!) l m)+1/(fromIntegral n)))])    
           where m = measure x liste
 
 
@@ -352,11 +354,25 @@ circuitDJ n f = C [("H", h, [1..n]),("F", oracle n f, [1..n]),("H", h', [1..(n-1
   where h = hadamard n
         h' = hadamard $ n-1
 
-
+-- Draws a circuit with the help of the Diag module.
 drawCircuit :: Int -> Circuit -> Diagram B R2
 drawCircuit n (C c) = myCircuit n c
 
+-- Allows the circuit to be drawn.
 main = mainWith $ drawCircuit 6 $ circuitDJ 6 (\_ -> 1)
+
+
+-- Plots an histogram for the values of the register.
+-- Makes a comparison between the estimate and the true probability.
+plotReg :: Int -> Int -> Register -> [Bool] -> IO()
+plotReg a n r qs = plotListsStyle [] [((defaultStyle{plotType = Impulses}), l), (((defaultStyle{plotType = Impulses}), l'))]
+  where d = estimate a n r qs
+        proba = map ((measureProba r qs) . toBin) [0 ..]
+        l' = zip (take (length d) [0.05, 1.05 ..]) proba
+        l = zip [((-1)::Double) ..] $ ((0.0):d)++[0.0]
+
+
+
 
 -- Algorithm that use Quantum mechanics.
 
