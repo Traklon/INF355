@@ -140,6 +140,8 @@ mask :: Int -> Int -> [Bool]
 mask i n = map (\x -> ((x `div` 2^(i-1)) `mod` 2) == 1) [0..(n-1)]
 
 
+
+
 -- Generation of useful classical Registers.
 
 
@@ -194,6 +196,7 @@ parallelize 1 g = g
 parallelize i (G m) = G (M.fromBlocks [[mapMatrix (* (m @@> (j,k))) n | k <- [0..l]] | j <- [0..l]])
   where (G n) = parallelize (i-1) (G m)
         l = (M.rows m) - 1
+
 
 
 
@@ -254,18 +257,24 @@ cTG c n i = parallelize i $ tmp c $ iden n
         tmp (C ((_, g, l):s)) (G m) = let (G m') = expandGate (intToBool l n) g in tmp (C s) (G (m' <> m))
 
 
--- concat merges two citcuits.
+-- concat merges two circuits.
 concat :: Circuit -> Circuit -> Circuit
 concat (C c) (C c') = C (c ++ c')
 
 
--- transfo applies a Circuit to a Register.
+-- transfo applies a Circuit to a QubitList.
+-- transfo' applies a Circuit to a Register.
 transfo :: Circuit -> QubitList -> Register
-transfo c ql = transfo' c $ qlToReg ql [0.. (n-1)]
+transfo c ql = trans c $ qlToReg ql [0.. (n-1)]
   where QL l = ql
         n = VV.length l
-        transfo' (C []) r = r
-        transfo' (C ((_, g, l):s)) r = transfo' (C s) $ mQM (expandGate (intToBool l n) g) r
+        trans (C []) r = r
+        trans (C ((_, g, l):s)) r = trans (C s) $ mQM (expandGate (intToBool l n) g) r
+
+transfo' :: Circuit -> Int -> Register -> Register
+transfo' c n r = trans c r
+  where trans (C []) r' = r'
+        trans (C ((_, g, l):s)) r' = trans (C s) $ mQM (expandGate (intToBool l n) g) r'
 
 
 
@@ -312,6 +321,16 @@ estimate g n r qs = VV.toList $ est n rands (VV.fromList (replicate n' 0))
           where m = measure x liste
 
 
+-- Plots an histogram for the values of the register.
+-- Makes a comparison between the estimate and the true probability.
+plotReg :: Int -> Int -> Register -> [Bool] -> IO()
+plotReg a n r qs = plotListsStyle [] [((defaultStyle{plotType = Impulses}), l), (((defaultStyle{plotType = Impulses}), l'))]
+  where d = estimate a n r qs
+        proba = [measureProba r qs ([False | _ <- [length (toBin b) .. (length (filter id qs))-1]]++(toBin b)) | b <- [0..]]
+        l' = zip (take (length d) [0.05, 1.05 ..]) proba
+        l = zip [((-1)::Double) ..] $ ((0.0):d)++[0.0]
+
+
 
 
 -- Some useful Circuits.
@@ -343,7 +362,7 @@ adder = C [("T", t,[1,2,3]),("C",c,[1,2])]
 -- The n-Qubit QFT performs a Fourier transform on n Qubits.
 qft :: Int -> Circuit
 qft 1 = C [("H", hadamard 1, [1])]
-qft n = C (("Q", cTG c 4 1, [1 .. (n-1)]):([("V", s i n,[i,n]) | i <- [1 .. (n-1)]]++[("H", hadamard 1, [n])]))
+qft n = C (("Q", cTG c (n-1) 1, [1 .. (n-1)]):([("V", s i n,[i,n]) | i <- [1 .. (n-1)]]++[("H", hadamard 1, [n])]))
   where c = qft (n-1)
         s i n = shift (pi/(2^(n-i-1))) 2 1
           
@@ -359,17 +378,10 @@ drawCircuit :: Int -> Circuit -> Diagram B R2
 drawCircuit n (C c) = myCircuit n c
 
 -- Allows the circuit to be drawn.
-main = mainWith $ drawCircuit 6 $ circuitDJ 6 (\_ -> 1)
 
-
--- Plots an histogram for the values of the register.
--- Makes a comparison between the estimate and the true probability.
-plotReg :: Int -> Int -> Register -> [Bool] -> IO()
-plotReg a n r qs = plotListsStyle [] [((defaultStyle{plotType = Impulses}), l), (((defaultStyle{plotType = Impulses}), l'))]
-  where d = estimate a n r qs
-        proba = map ((measureProba r qs) . toBin) [0 ..]
-        l' = zip (take (length d) [0.05, 1.05 ..]) proba
-        l = zip [((-1)::Double) ..] $ ((0.0):d)++[0.0]
+--main = mainWith $ drawCircuit 3 toffoli
+--main = mainWith $ drawCircuit 6 $ circuitDJ 6 (\_ -> 1)
+--main = mainWith $ drawCircuit 4 $ qft 4
 
 
 

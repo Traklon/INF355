@@ -1,5 +1,5 @@
 
-Introduction to Quantum Computing.
+I - Introduction to Quantum Computing.
 
 
 In quantum computing, Qubits are the equivalent of the bits that
@@ -41,5 +41,23 @@ Contrary to classical electrical circuits, these circuits can always be
 read from left to right and can thus be implemented as a list of Gates.
 
 
+
+
+II - The implementation.
+
+
+The choices that have been made in our implementation are for the sake
+of simplicity, modularity and performance. This work can be seen as the
+construction of a framework for the simulation of quantum computing.
+The functions that act on Gates, Circuits, Registers should be sufficient
+to simulate lots of different circuits.
+
+The examples that are described in the source code are sufficient to
+understand in depth what has been done.
+
+This basis can be used to go further than where I went because the 
+possibilities are virtually infinite. The code seems to work up to
+9 Qubits on a laptop, the utilisation of matrices being the bottleneck.
+
 More information on the choices of implementation can be found directly
-in the source code.
+in the source code and/or will be explained during the presentation.

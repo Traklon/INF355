@@ -1,0 +1,29 @@
+gnome-open toffoli.svg
+
+:l Q2
+
+let ql = QL (VV.fromList [Q 0 1, Q 0 1, Q 1 0])
+let r = transfo toffoli ql
+plotReg 42 1000 r [True, True, True]
+
+cTG toffoli 3 1 
+
+let r = transfo adder ql
+plotReg 42 1000 r [True, True, True]
+
+let r = signum $ Qubits (V.fromList [1,2,3,4,5,6,7,8])
+plotReg 42 1000 r [True, True, True]
+
+gnome-open qft.svg
+
+let r' = transfo' (qft 3) 3 r 
+plotReg 42 1000 r' [True, True, True]
+plotReg 42 1000 r' [False, True, True]
+
+gnome-open dj.svg
+
+constantDJ 5
+equilibratedDJ 5
+
+
+
