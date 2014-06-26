@@ -1,4 +1,4 @@
-module Q2 where
+--module Q2 where
 
 
 -- Some imports are done to ensure efficient matrix calculations
@@ -15,7 +15,9 @@ import Data.Function (on)
 import Data.Ord (comparing)
 import Data.List (sortBy, groupBy)
 import System.Random
-
+import Diag
+import Diagrams.Prelude hiding (shift, (<>))
+import Diagrams.Backend.SVG.CmdLine
 
 
 
@@ -75,7 +77,7 @@ instance Num Register where
 data Gate = G (M.Matrix (Complex Double)) deriving (Show) 
 
 -- A Circuit is a list of Gates, with the Qubits they act on.
-data Circuit = C [(Gate, [Int])]
+data Circuit = C [([Char], Gate, [Int])]
 
 
 
@@ -130,17 +132,6 @@ fromBin :: [Bool] -> Int
 fromBin l = fromBin' 1 0 $ reverse l
   where fromBin' _ v [] = v
         fromBin' i v (x:s) = if x then (fromBin' (2*i) (v+i) s) else (fromBin' (2*i) v s)
-
-
--- Converts [1,3] 6 in [True, False, True, False, False, False].
-intToBool :: [Int] -> Int -> [Bool]
-intToBool l i = reverse $ itb (reverse l) i
-  where itb [] n = [False | _ <- [1 .. n]]
-        itb (x:s) n = if (x == n) then True:(itb s (n-1)) else False:(itb (x:s) (n-1))
-
--- Opposite function. 
-boolToInt :: [Bool] -> [Int]
-boolToInt l = map fst $ filter snd $ zip [1..(length l)] l
 
 
 -- Creates an helpful mask to know which registers contains a specific value for one Qubit.
@@ -259,7 +250,7 @@ oracle n f = G (buildMatrix (2^n) (2^n) g)
 cTG :: Circuit -> Int -> Int -> Gate
 cTG c n i = parallelize i $ tmp c $ iden n
   where tmp (C []) g = g
-        tmp (C ((g, l):s)) (G m) = let (G m') = expandGate (intToBool l n) g in tmp (C s) (G (m' <> m))
+        tmp (C ((_, g, l):s)) (G m) = let (G m') = expandGate (intToBool l n) g in tmp (C s) (G (m' <> m))
 
 
 -- concat merges two citcuits.
@@ -273,7 +264,7 @@ transfo c ql = transfo' c $ qlToReg ql [0.. (n-1)]
   where QL l = ql
         n = VV.length l
         transfo' (C []) r = r
-        transfo' (C ((g, l):s)) r = transfo' (C s) $ mQM (expandGate (intToBool l n) g) r
+        transfo' (C ((_, g, l):s)) r = transfo' (C s) $ mQM (expandGate (intToBool l n) g) r
 
 
 -- Allows the calculation of the probability of the value of specific Qubits.
@@ -322,7 +313,7 @@ estimate g n r qs = VV.toList $ est n rands (VV.fromList (replicate n' 0))
 -- Useful because it is universal : any reversible circuit can be
 -- constructed only with toffoli gates. 
 toffoli :: Circuit
-toffoli = C [(h,[3]), (v, [2,3]), (c, [1,2]), (v', [2,3]), (c, [1,2]), (v, [1,3]), (h, [3])] 
+toffoli = C [("H",h,[3]), ("V",v, [2,3]), ("C",c, [1,2]), ("U", v', [2,3]), ("C",c, [1,2]), ("V", v, [1,3]), ("H", h, [3])] 
   where h = hadamard 1
         v = shift (pi/2) 2 1
         v' = shift (-pi/2) 2 1
@@ -335,29 +326,32 @@ toffoli = C [(h,[3]), (v, [2,3]), (c, [1,2]), (v', [2,3]), (c, [1,2]), (v, [1,3]
 -- The second Qubit receives the XOR of the first 2 Qubits.
 -- The last Qubit receives the carry (the AND) of the first 2 Qubits.
 adder :: Circuit
-adder = C [(t,[1,2,3]),(c,[1,2])]
+adder = C [("T", t,[1,2,3]),("C",c,[1,2])]
   where t = cTG toffoli 3 1
         c = cNOT 1
 
 
 -- The n-Qubit QFT performs a Fourier transform on n Qubits.
 qft :: Int -> Circuit
-qft 1 = C [(hadamard 1, [1])]
-qft n = C ((cTG c 4 1, [1 .. (n-1)]):([(s i n,[i,n]) | i <- [1 .. (n-1)]]++[(hadamard 1, [n])]))
+qft 1 = C [("H", hadamard 1, [1])]
+qft n = C (("Q", cTG c 4 1, [1 .. (n-1)]):([("V", s i n,[i,n]) | i <- [1 .. (n-1)]]++[("H", hadamard 1, [n])]))
   where c = qft (n-1)
         s i n = shift (pi/(2^(n-i-1))) 2 1
           
 
 -- Creates the Deutsch-Josza circuit.
 circuitDJ :: Int -> ([Bool] -> Int) -> Circuit
-circuitDJ n f = C [(h, [1..n]),(oracle n f, [1..n]),(h', [1..(n-1)])]
+circuitDJ n f = C [("H", h, [1..n]),("F", oracle n f, [1..n]),("H", h', [1..(n-1)])]
   where h = hadamard n
         h' = hadamard $ n-1
 
 
+drawCircuit :: Int -> Circuit -> Diagram B R2
+drawCircuit n (C c) = myCircuit n c
 
+main = mainWith $ drawCircuit 6 $ circuitDJ 6 (\_ -> 1)
 
--- Some algorithms that use Quantum mechanics.
+-- Algorithm that use Quantum mechanics.
 
 
 -- Deutsch-Josza's algorithm examples.
@@ -370,6 +364,7 @@ circuitDJ n f = C [(h, [1..n]),(oracle n f, [1..n]),(h', [1..(n-1)])]
 -- f is constant if they are all in the state 0  (can be physically interpreted as a 
 -- constructive interference), and equilibrated if not (destructive interference).
 -- For more information : http://en.wikipedia.org/wiki/Deutsch%E2%80%93Jozsa_algorithm
+
 constantDJ :: Int -> [Double]
 constantDJ n = estimate 42 1000 r ((replicate (n-1) True)++[False]) 
   where tmp = QL (VV.fromList ((replicate (n-1) (Q 1 0))++[Q 0 1]))
