@@ -1,4 +1,3 @@
---module Q2 where
 
 
 -- Some imports are done to ensure efficient matrix calculations
@@ -267,6 +266,11 @@ transfo c ql = transfo' c $ qlToReg ql [0.. (n-1)]
         transfo' (C ((_, g, l):s)) r = transfo' (C s) $ mQM (expandGate (intToBool l n) g) r
 
 
+
+
+-- Measures.
+
+
 -- Allows the calculation of the probability of the value of specific Qubits.
 -- It is used to understand the circuits/algorithms but it can't be used in
 -- reality : only measurements can be made, and probabilities inferred from them.
@@ -281,6 +285,7 @@ measureProba (Qubits r) qs v = realPart $ sum $ map (abs . (^2) . snd) (filter f
                 l' = conc n (i-1) s (x':s')
         select = map and $ conc n n qs v
 
+
 -- Performs a measurement on a register.
 -- It usually terminates the calculations, at the end of circuits/algorithms
 -- as it freezes the value of the register.
@@ -293,6 +298,8 @@ measure g l = isAbove rand $ zip [-1 ..] $ partSum l
         isAbove val ((a,b):s) = if (val < b) then isAbove val s else a
 
 
+-- Performs an estimation based on a number of measures.
+-- The estimation is only done on selected Qubits.
 estimate :: Int -> Int -> Register -> [Bool] -> [Double]
 estimate g n r qs = VV.toList $ est n rands (VV.fromList (replicate n' 0))
   where liste = [measureProba r qs ([False | _ <- [length (toBin b) .. (length (filter id qs))-1]]++(toBin b)) | b <- [0..2^(length (filter id qs))-1]]
